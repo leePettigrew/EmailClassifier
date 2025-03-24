@@ -13,6 +13,7 @@ This implementation strictly adheres to the project brief and ensures modularity
 import preprocess
 import data
 import randomforest as rf
+import hierarchical as hm  # Your hierarchical.py module
 import config
 import evaluation
 import logging
@@ -20,7 +21,13 @@ import sys
 
 
 def get_user_input():
-    print("Welcome to the Chained Multi-Output Email Classification Pipeline")
+    print("Welcome to the Email Classification Pipeline")
+
+    # Select modeling approach
+    approach = input("Select modeling approach (1) Chained Multi-Output, (2) Hierarchical [default: 1]: ").strip()
+    if approach not in ["1", "2"]:
+        print("Invalid or empty input. Defaulting to '1' (Chained Multi-Output).")
+        approach = "1"
 
     # Select embedding method
     embed_method = input("Enter embedding method (tfidf/bert) [default: tfidf]: ").strip().lower()
@@ -64,17 +71,20 @@ def get_user_input():
             print("Invalid input. Using default.")
 
     logging.info(
-        "Configuration updated: EMBEDDING_METHOD=%s, COMPARE_EMBEDDINGS=%s, PLOT_CONFUSION=%s, NUM_TREES=%s, MAX_DEPTH=%s, MIN_SAMPLES_SPLIT=%s",
-        config.EMBEDDING_METHOD, config.COMPARE_EMBEDDINGS, config.PLOT_CONFUSION, config.NUM_TREES, config.MAX_DEPTH,
+        "Configuration updated: Approach=%s, EMBEDDING_METHOD=%s, COMPARE_EMBEDDINGS=%s, PLOT_CONFUSION=%s, NUM_TREES=%s, MAX_DEPTH=%s, MIN_SAMPLES_SPLIT=%s",
+        approach, config.EMBEDDING_METHOD, config.COMPARE_EMBEDDINGS, config.PLOT_CONFUSION, config.NUM_TREES,
+        config.MAX_DEPTH,
         config.MIN_SAMPLES_SPLIT)
+
+    return approach
 
 
 def main():
-    # Configure logging format and level
+    # Configure logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-    # Get user inputs interactively
-    get_user_input()
+    # Get user input interactively
+    approach = get_user_input()
 
     # Step 1: Load raw data
     logging.info("Loading raw data...")
@@ -88,7 +98,7 @@ def main():
     logging.info("Removing noise from text...")
     df_clean = preprocess.noise_remover(df_dedup)
 
-    # Save preprocessed output for verification/debugging
+    # Save preprocessed output for debugging
     preprocessed_output_path = "preprocessed_data.csv"
     df_clean.to_csv(preprocessed_output_path, index=False)
     logging.info("Preprocessed data saved to %s", preprocessed_output_path)
@@ -98,38 +108,55 @@ def main():
         original_method = config.EMBEDDING_METHOD
         for method in ["tfidf", "bert"]:
             config.EMBEDDING_METHOD = method
-            logging.info("--- Running pipeline with %s embeddings ---", method.upper())
+            logging.info("=== Running pipeline with %s embeddings ===", method.upper())
             logging.info("Creating data object with %s features...", method.upper())
             data_obj = data.get_data_object(df_clean)
 
-            logging.info("Initializing RandomForest Chain Classifier...")
-            model = rf.RandomForestChainClassifier(n_estimators=config.NUM_TREES,
-                                                   max_depth=config.MAX_DEPTH,
-                                                   min_samples_split=config.MIN_SAMPLES_SPLIT,
-                                                   random_state=config.RANDOM_SEED)
+            # Initialize the chosen model based on approach
+            if approach == "1":
+                logging.info("Initializing RandomForest Chain Classifier (Chained Approach)...")
+                model = rf.RandomForestChainClassifier(n_estimators=config.NUM_TREES,
+                                                       max_depth=config.MAX_DEPTH,
+                                                       min_samples_split=config.MIN_SAMPLES_SPLIT,
+                                                       random_state=config.RANDOM_SEED)
+            else:
+                logging.info("Initializing Hierarchical Classifier (Hierarchical Approach)...")
+                model = hm.HierarchicalClassifier(n_estimators=config.NUM_TREES,
+                                                  max_depth=config.MAX_DEPTH,
+                                                  min_samples_split=config.MIN_SAMPLES_SPLIT,
+                                                  random_state=config.RANDOM_SEED)
+
             logging.info("Training model...")
             model.train(data_obj)
 
             logging.info("Predicting on test set...")
             predictions = model.predict(data_obj)
 
-            logging.info("Evaluating model performance...")
-            logging.info("Results for %s embedding:", method.upper())
+            logging.info("Evaluating model performance for %s embedding:", method.upper())
             model.print_results(data_obj)
             if config.PLOT_CONFUSION:
                 evaluation.plot_confusion_matrices(data_obj.y_test, predictions, data_obj.label_encoders,
-                                                   title_suffix=method.upper())
-        config.EMBEDDING_METHOD = original_method  # Restore original setting if changed
+                                                   title_suffix=f"{method.upper()}_{'CHAIN' if approach == '1' else 'HIER'}")
+            logging.info("=== Completed pipeline with %s embeddings ===", method.upper())
+        config.EMBEDDING_METHOD = original_method  # Restore original setting
     else:
         embed_name = "TF-IDF" if config.EMBEDDING_METHOD.lower() == "tfidf" else "BERT"
         logging.info("Creating data object with %s features...", embed_name)
         data_obj = data.get_data_object(df_clean)
 
-        logging.info("Initializing RandomForest Chain Classifier...")
-        model = rf.RandomForestChainClassifier(n_estimators=config.NUM_TREES,
-                                               max_depth=config.MAX_DEPTH,
-                                               min_samples_split=config.MIN_SAMPLES_SPLIT,
-                                               random_state=config.RANDOM_SEED)
+        if approach == "1":
+            logging.info("Initializing RandomForest Chain Classifier (Chained Approach)...")
+            model = rf.RandomForestChainClassifier(n_estimators=config.NUM_TREES,
+                                                   max_depth=config.MAX_DEPTH,
+                                                   min_samples_split=config.MIN_SAMPLES_SPLIT,
+                                                   random_state=config.RANDOM_SEED)
+        else:
+            logging.info("Initializing Hierarchical Classifier (Hierarchical Approach)...")
+            model = hm.HierarchicalClassifier(n_estimators=config.NUM_TREES,
+                                              max_depth=config.MAX_DEPTH,
+                                              min_samples_split=config.MIN_SAMPLES_SPLIT,
+                                              random_state=config.RANDOM_SEED)
+
         logging.info("Training model...")
         model.train(data_obj)
 
@@ -140,7 +167,7 @@ def main():
         model.print_results(data_obj)
         if config.PLOT_CONFUSION:
             evaluation.plot_confusion_matrices(data_obj.y_test, predictions, data_obj.label_encoders,
-                                               title_suffix=config.EMBEDDING_METHOD.upper())
+                                               title_suffix=f"{config.EMBEDDING_METHOD.upper()}_{'CHAIN' if approach == '1' else 'HIER'}")
 
 
 if __name__ == "__main__":

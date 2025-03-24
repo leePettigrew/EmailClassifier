@@ -63,20 +63,26 @@ def encode_labels(labels: pd.DataFrame):
 def get_data_object(preprocessed_df: pd.DataFrame) -> Data:
     """
     Splits the preprocessed DataFrame into training and testing sets,
-    generates feature embeddings on the CombinedText column, encodes the labels,
-    and returns a Data object encapsulating these elements.
+    generates feature embeddings on the CombinedText column (TF-IDF or BERT),
+    encodes the labels, and returns a Data object encapsulating these elements.
 
     :param preprocessed_df: The DataFrame output from preprocess.py.
     :return: Data object containing training/test splits, feature matrices, vectorizer, and label encoders.
     """
-    # Extract combined text and labels
+    # Extract the combined text (created in preprocess.py) and labels (y2, y3, y4)
     features = preprocessed_df["CombinedText"]
     labels = preprocessed_df[["y2", "y3", "y4"]]
 
-    # Split the data; stratify on y2 for balance on the first label
+    # Split the data; stratify on y2 if possible to maintain class balance
     X_train_text, X_test_text, y_train, y_test = train_test_split(
         features, labels, test_size=config.TEST_SIZE, random_state=config.RANDOM_SEED, stratify=labels["y2"]
     )
+
+    # Reset indices to ensure they are contiguous for proper indexing
+    X_train_text = X_train_text.reset_index(drop=True)
+    y_train = y_train.reset_index(drop=True)
+    X_test_text = X_test_text.reset_index(drop=True)
+    y_test = y_test.reset_index(drop=True)
 
     # Generate features using the specified embedding method (TF-IDF or BERT)
     if config.EMBEDDING_METHOD.lower() == 'tfidf':
@@ -98,4 +104,5 @@ def get_data_object(preprocessed_df: pd.DataFrame) -> Data:
     y_test_encoded, _ = encode_labels(y_test)
 
     return Data(X_train, X_test, y_train_encoded, y_test_encoded, vectorizer, label_encoders)
+
 
