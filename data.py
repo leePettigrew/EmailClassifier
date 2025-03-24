@@ -15,17 +15,18 @@ from sklearn.model_selection import train_test_split
 import config
 import embeddings
 from sklearn.preprocessing import LabelEncoder
+import logging
 
 class Data:
     """
     Encapsulates the training/testing data for modeling.
 
     Attributes:
-        X_train: TF-IDF feature matrix for training (sparse matrix).
-        X_test:  TF-IDF feature matrix for testing (sparse matrix).
+        X_train: feature matrix for training (sparse matrix or numpy array).
+        X_test:  feature matrix for testing (sparse matrix or numpy array).
         y_train: DataFrame of encoded labels (y2, y3, y4) for training.
         y_test:  DataFrame of encoded labels (y2, y3, y4) for testing.
-        vectorizer: The fitted TF-IDF vectorizer.
+        vectorizer: The vectorizer or embedding model used to transform text.
         label_encoders: Dictionary of LabelEncoders for each label column.
     """
     def __init__(self, X_train, X_test, y_train, y_test, vectorizer, label_encoders):
@@ -62,28 +63,39 @@ def encode_labels(labels: pd.DataFrame):
 def get_data_object(preprocessed_df: pd.DataFrame) -> Data:
     """
     Splits the preprocessed DataFrame into training and testing sets,
-    generates TF-IDF embeddings on the CombinedText column, encodes the labels,
+    generates feature embeddings on the CombinedText column, encodes the labels,
     and returns a Data object encapsulating these elements.
 
     :param preprocessed_df: The DataFrame output from preprocess.py.
-    :return: Data object containing training/test splits, TF-IDF matrices, vectorizer, and label encoders.
+    :return: Data object containing training/test splits, feature matrices, vectorizer, and label encoders.
     """
-    # Extract the combined text (created in preprocess.py) and labels (y2, y3, y4)
+    # Extract combined text and labels
     features = preprocessed_df["CombinedText"]
     labels = preprocessed_df[["y2", "y3", "y4"]]
 
-    # Split the data; stratify on y2 if possible to maintain class balance
+    # Split the data; stratify on y2 for balance on the first label
     X_train_text, X_test_text, y_train, y_test = train_test_split(
         features, labels, test_size=config.TEST_SIZE, random_state=config.RANDOM_SEED, stratify=labels["y2"]
     )
 
-    # Generate TF-IDF embeddings using the embeddings module
-    X_train, X_test, vectorizer = embeddings.generate_tfidf_features(
-        X_train_text, X_test_text, max_features=config.MAX_FEATURES, stop_words=config.STOP_WORDS
-    )
+    # Generate features using the specified embedding method (TF-IDF or BERT)
+    if config.EMBEDDING_METHOD.lower() == 'tfidf':
+        X_train, X_test, vectorizer = embeddings.generate_tfidf_features(
+            X_train_text, X_test_text, max_features=config.MAX_FEATURES, stop_words=config.STOP_WORDS
+        )
+        logging.info(f"Generated TF-IDF features with vocabulary size {X_train.shape[1]}.")
+    elif config.EMBEDDING_METHOD.lower() == 'bert':
+        X_train, X_test, embedder_model = embeddings.generate_sentence_embeddings(
+            X_train_text, X_test_text, model_name=config.BERT_MODEL_NAME
+        )
+        vectorizer = embedder_model
+        logging.info(f"Generated BERT embeddings using model '{config.BERT_MODEL_NAME}' (vector size {X_train.shape[1]}).")
+    else:
+        raise ValueError(f"Unsupported embedding method: {config.EMBEDDING_METHOD}")
 
     # Encode the label columns to numeric values
     y_train_encoded, label_encoders = encode_labels(y_train)
     y_test_encoded, _ = encode_labels(y_test)
 
     return Data(X_train, X_test, y_train_encoded, y_test_encoded, vectorizer, label_encoders)
+

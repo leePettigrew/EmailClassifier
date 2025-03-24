@@ -1,22 +1,21 @@
 """
 preprocess.py
 
-This module handles all data preprocessing steps for the multi-label email classification project.
-It:
   1. Loads input data from CSV files specified in config.
   2. Renames columns to shorter versions (e.g., Type 1 -> y1, Type 2 -> y2, etc.).
-  3. Converts text columns to strings and combines "Ticket Summary" and "Interaction content" into one field.
-  4. Applies deduplication to remove repeated or boilerplate text from the interaction content.
+  3. Converts text columns to strings and combines "Ticket Summary " and "Interaction content" into one field.
+  4. Applies deduplication to remove repeated or boilerplate text from the interaction content
   5. Removes noise patterns from the text.
-  6. Optionally translates texts to English (if needed).
 
-This design adheres to the brief by keeping preprocessing modular and separated from model code.
 """
 
 import pandas as pd
 import re
 import config
+import logging
 
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_input_data() -> pd.DataFrame:
     """
@@ -26,9 +25,13 @@ def get_input_data() -> pd.DataFrame:
 
     :return: Combined DataFrame from both CSV files.
     """
-    # Load CSV files from the data folder
-    df1 = pd.read_csv(config.DATA_FILE_1, skipinitialspace=True)
-    df2 = pd.read_csv(config.DATA_FILE_2, skipinitialspace=True)
+    try:
+        df1 = pd.read_csv(config.DATA_FILE_1, skipinitialspace=True)
+        df2 = pd.read_csv(config.DATA_FILE_2, skipinitialspace=True)
+        logging.info(f"Loaded {len(df1)} records from {config.DATA_FILE_1} and {len(df2)} from {config.DATA_FILE_2}")
+    except Exception as e:
+        logging.error("Error loading CSV files: %s", e)
+        raise
 
     # Rename label columns to short forms for convenience
     rename_dict = {
@@ -42,137 +45,105 @@ def get_input_data() -> pd.DataFrame:
 
     # Concatenate the two dataframes
     df = pd.concat([df1, df2], ignore_index=True)
+    logging.info(f"Total records after concatenation: {len(df)}")
 
-    # Ensure text columns are of string type
+    # Ensure text columns are strings
     df[config.TICKET_SUMMARY_COL] = df[config.TICKET_SUMMARY_COL].astype(str)
     df[config.INTERACTION_CONTENT_COL] = df[config.INTERACTION_CONTENT_COL].astype(str)
 
-    # Combine "Ticket Summary" and "Interaction content" into one field "CombinedText"
+    # Combine "Ticket Summary" and "Interaction content" into "CombinedText"
     df["CombinedText"] = df[config.TICKET_SUMMARY_COL] + " " + df[config.INTERACTION_CONTENT_COL]
+    logging.info("Combined 'Ticket Summary' and 'Interaction content' into 'CombinedText'.")
 
     # Drop rows where primary label (y2) is missing or empty
+    before_drop = len(df)
     df = df.loc[(df["y2"] != '') & (~df["y2"].isna())]
+    after_drop = len(df)
+    logging.info(f"Dropped {before_drop - after_drop} records due to missing primary label (y2).")
 
     return df
 
-
 def de_duplication(data: pd.DataFrame) -> pd.DataFrame:
     """
-    Removes duplicate or repetitive sections from the Interaction content
-    using Ticket id as the grouping key. The deduplication process:
-      - Splits email text using specific patterns,
-      - Removes known boilerplate phrases using pre-defined customer support templates,
-      - Retains only unique segments per ticket.
-
+    Removes duplicate or repetitive sections from the Interaction content using Ticket id as the grouping key.
+    Splits email text using specified patterns and removes boilerplate phrases.
     The deduplicated content is written back to the Interaction content column.
 
-    :param data: Input DataFrame
-    :return: DataFrame with cleaned interaction content.
+    :param data: Input DataFrame.
+    :return: DataFrame with deduplicated interaction content.
     """
+    data = data.copy()  # Avoid modifying the original dataframe
     # Create a temporary column for deduplicated content
     data["ic_deduplicated"] = ""
 
-    # Customer support templates for multiple languages
+    # Define customer support templates (example using English)
     cu_template = {
         "english": [
             r"(?:Aspiegel|\*\*\*\*\*\(PERSON\)) Customer Support team\,?",
             r"(?:Aspiegel|\*\*\*\*\*\(PERSON\)) SE is a company incorporated under the laws of Ireland with its headquarters in Dublin, Ireland\.?",
             r"(?:Aspiegel|\*\*\*\*\*\(PERSON\)) SE is the provider of Huawei Mobile Services to Huawei and Honor device owners in (?:Europe|\*\*\*\*\*\(LOC\)), Canada, Australia, New Zealand and other countries\.?"
-        ],
-        "german": [
-            r"(?:Aspiegel|\*\*\*\*\*\(PERSON\)) Kundenservice\,?",
-            r"Die (?:Aspiegel|\*\*\*\*\*\(PERSON\)) SE ist eine Gesellschaft nach irischem Recht mit Sitz in Dublin, Irland\.?",
-            r"(?:Aspiegel|\*\*\*\*\*\(PERSON\)) SE ist der Anbieter von Huawei Mobile Services für Huawei- und Honor-Gerätebesitzer in Europa, Kanada, Australien, Neuseeland und anderen Ländern\.?"
-        ],
-        "french": [
-            r"L'équipe d'assistance à la clientèle d'Aspiegel\,?",
-            r"Die (?:Aspiegel|\*\*\*\*\*\(PERSON\)) SE est une société de droit irlandais dont le siège est à Dublin, en Irlande\.?",
-            r"(?:Aspiegel|\*\*\*\*\*\(PERSON\)) SE est le fournisseur de services mobiles Huawei aux propriétaires d'appareils Huawei et Honor en Europe, au Canada, en Australie, en Nouvelle-Zélande et dans d'autres pays\.?"
-        ],
-        "spanish": [
-            r"(?:Aspiegel|\*\*\*\*\*\(PERSON\)) Soporte Servicio al Cliente\,?",
-            r"Die (?:Aspiegel|\*\*\*\*\*\(PERSON\)) es una sociedad constituida en virtud de la legislación de Irlanda con su sede en Dublín, Irlanda\.?",
-            r"(?:Aspiegel|\*\*\*\*\*\(PERSON\)) SE es el proveedor de servicios móviles de Huawei a los propietarios de dispositivos de Huawei y Honor en Europa, Canadá, Australia, Nueva Zelanda y otros países\.?"
-        ],
-        "italian": [
-            r"Il tuo team ad (?:Aspiegel|\*\*\*\*\*\(PERSON\)),?",
-            r"Die (?:Aspiegel|\*\*\*\*\*\(PERSON\)) SE è una società costituita secondo le leggi irlandesi con sede a Dublino, Irlanda\.?",
-            r"(?:Aspiegel|\*\*\*\*\*\(PERSON\)) SE è il fornitore di servizi mobili Huawei per i proprietari di dispositivi Huawei e Honor in Europa, Canada, Australia, Nuova Zelanda e altri paesi\.?"
-        ],
-        "portguese": [
-            r"(?:Aspiegel|\*\*\*\*\*\(PERSON\)) Customer Support team,?",
-            r"Die (?:Aspiegel|\*\*\*\*\*\(PERSON\)) SE é uma empresa constituída segundo as leis da Irlanda, com sede em Dublin, Irlanda\.?",
-            r"(?:Aspiegel|\*\*\*\*\*\(PERSON\)) SE é o provedor de Huawei Mobile Services para Huawei e Honor proprietários de dispositivos na Europa, Canadá, Austrália, Nova Zelândia e outros países\.?"
         ]
     }
+    # Build a single regex pattern for the templates
+    cu_pattern = "|".join(f"({pattern})" for pattern in cu_template["english"])
 
-    # Build a single regex pattern for all customer support templates
-    cu_pattern = ""
-    for lang_templates in cu_template.values():
-        for pattern in lang_templates:
-            cu_pattern += f"({pattern})|"
-    cu_pattern = cu_pattern.rstrip("|")
-
-    # Define patterns for splitting email text
-    pattern_1 = r"(From\s?:\s?xxxxx@xxxx.com Sent\s?:.{30,70}Subject\s?:)"
-    pattern_2 = r"(On.{30,60}wrote:)"
-    pattern_3 = r"(Re\s?:|RE\s?:)"
-    pattern_4 = r"(\*\*\*\*\*\(PERSON\) Support issue submit)"
-    pattern_5 = r"(\s?\*\*\*\*\*\(PHONE\))*$"
-    split_pattern = f"{pattern_1}|{pattern_2}|{pattern_3}|{pattern_4}|{pattern_5}"
+    # Define splitting patterns (customize these based on your email structure)
+    split_patterns = [
+        r"(From\s?:\s?xxxxx@xxxx.com Sent\s?:.{30,70}Subject\s?:)",
+        r"(On.{30,60}wrote:)",
+        r"(Re\s?:|RE\s?:)",
+        r"(\*\*\*\*\*\(PERSON\) Support issue submit)",
+        r"(\s?\*\*\*\*\*\(PHONE\))*$"
+    ]
+    split_pattern = "|".join(split_patterns)
 
     # Process deduplication for each unique Ticket id
-    tickets = data[config.TICKET_ID_COL].value_counts()
-
-    for t in tickets.index:
-        ticket_df = data.loc[data[config.TICKET_ID_COL] == t, :]
+    ticket_ids = data[config.TICKET_ID_COL].unique()
+    logging.info("Starting deduplication for %d tickets", len(ticket_ids))
+    for ticket_id in ticket_ids:
+        ticket_df = data[data[config.TICKET_ID_COL] == ticket_id]
         ic_set = set()
-        ic_deduplicated = []
+        dedup_contents = []
         for ic in ticket_df[config.INTERACTION_CONTENT_COL]:
-            # Split text based on the defined patterns
-            ic_parts = re.split(split_pattern, ic)
-            ic_parts = [part for part in ic_parts if part is not None]
-            # Remove split patterns from each part
-            ic_parts = [re.sub(split_pattern, "", part.strip()) for part in ic_parts]
-            # Remove customer support boilerplate using the customer template
-            ic_parts = [re.sub(cu_pattern, "", part.strip()) for part in ic_parts]
-
-            current_parts = []
-            for part in ic_parts:
-                if len(part) > 0 and part not in ic_set:
+            # Split text based on defined patterns
+            parts = re.split(split_pattern, ic)
+            parts = [part for part in parts if part]  # Remove empty parts
+            # Clean each part: remove remaining split patterns and boilerplate patterns
+            parts = [re.sub(split_pattern, "", part.strip()) for part in parts]
+            parts = [re.sub(cu_pattern, "", part.strip()) for part in parts]
+            # Retain only unique parts
+            unique_parts = []
+            for part in parts:
+                if part and part not in ic_set:
                     ic_set.add(part)
-                    current_parts.append(part + "\n")
-            ic_deduplicated.append(" ".join(current_parts))
-        # Assign the deduplicated content back for this ticket
-        data.loc[data[config.TICKET_ID_COL] == t, "ic_deduplicated"] = ic_deduplicated
+                    unique_parts.append(part)
+            dedup_contents.append(" ".join(unique_parts))
+        # Assign deduplicated content for this ticket
+        data.loc[data[config.TICKET_ID_COL] == ticket_id, "ic_deduplicated"] = dedup_contents
 
-    # Optionally, export intermediate results for debugging
+    # Optionally, save intermediate deduplication output for debugging
     data.to_csv('deduplication_output.csv', index=False)
-
-    # Replace original Interaction content with the deduplicated version
+    # Replace original Interaction content with deduplicated version and drop temporary column
     data[config.INTERACTION_CONTENT_COL] = data["ic_deduplicated"]
     data.drop(columns=["ic_deduplicated"], inplace=True)
-
+    logging.info("Deduplication completed.")
     return data
-
 
 def noise_remover(df: pd.DataFrame) -> pd.DataFrame:
     """
     Removes defined noise patterns from Ticket Summary and Interaction content.
     Cleans and standardizes the text for better feature extraction.
 
-    :param df: Input DataFrame
-    :return: Cleaned DataFrame
+    :param df: Input DataFrame.
+    :return: Cleaned DataFrame.
     """
-    # Define noise patterns for general removal
-    noise = r"(sv\s*:)|(wg\s*:)|(ynt\s*:)|(fw(d)?\s*:)|(r\s*:)|(re\s*:)|(\[|\])|(aspiegel support issue submit)|(null)|(nan)|((bonus place my )?support.pt 自动回复:)"
-    df[config.TICKET_SUMMARY_COL] = df[config.TICKET_SUMMARY_COL].str.lower() \
-        .replace(noise, " ", regex=True) \
-        .replace(r'\s+', ' ', regex=True).str.strip()
-    df[config.INTERACTION_CONTENT_COL] = df[config.INTERACTION_CONTENT_COL].str.lower()
+    # Remove noise from Ticket Summary
+    summary_noise = r"(sv\s*:)|(wg\s*:)|(ynt\s*:)|(fw(d)?\s*:)|(r\s*:)|(re\s*:)|(\[|\])|(aspiegel support issue submit)|(null)|(nan)"
+    df[config.TICKET_SUMMARY_COL] = df[config.TICKET_SUMMARY_COL].str.lower().replace(summary_noise, " ", regex=True)
+    df[config.TICKET_SUMMARY_COL] = df[config.TICKET_SUMMARY_COL].replace(r'\s+', ' ', regex=True).str.strip()
 
-    # Additional noise patterns to remove from Interaction content
-    noise_patterns = [
+    # Remove noise from Interaction content
+    interaction_noise = [
         r"(from :)|(subject :)|(sent :)|(r\s*:)|(re\s*:)",
         r"(january|february|march|april|may|june|july|august|september|october|november|december)",
         r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)",
@@ -197,9 +168,9 @@ def noise_remover(df: pd.DataFrame) -> pd.DataFrame:
         r"thank you very kindly",
         r"thank you( very much)?",
         r"i would like to follow up on the case you raised on the date",
-        r"i will do my very best to assist you"
+        r"i will do my very best to assist you",
         r"in order to give you the best solution",
-        r"could you please clarify your request with following information:"
+        r"could you please clarify your request with following information:",
         r"in this matter",
         r"we hope you(( are)|('re)) doing ((fine)|(well))",
         r"i would like to follow up on the case you raised on",
@@ -214,18 +185,12 @@ def noise_remover(df: pd.DataFrame) -> pd.DataFrame:
         r"[^0-9a-zA-Z]+",
         r"(\s|^).(\s|$)"
     ]
-
-    for pattern in noise_patterns:
+    for pattern in interaction_noise:
         df[config.INTERACTION_CONTENT_COL] = df[config.INTERACTION_CONTENT_COL].replace(pattern, " ", regex=True)
-
     df[config.INTERACTION_CONTENT_COL] = df[config.INTERACTION_CONTENT_COL].replace(r'\s+', ' ', regex=True).str.strip()
 
-    # Optionally, filter out rows with insufficient y1 frequency (if needed)
-    good_y1 = df["y1"].value_counts()[df["y1"].value_counts() > 10].index
-    df = df.loc[df["y1"].isin(good_y1)]
-
+    logging.info("Noise removal completed.")
     return df
-
 
 def translate_to_en(texts: list[str]) -> list[str]:
     """
@@ -275,3 +240,11 @@ def translate_to_en(texts: list[str]) -> list[str]:
             translated_text = tokenizer.batch_decode(generated_tokens, skip_special_tokens=True)[0]
             text_en_list.append(translated_text)
     return text_en_list
+
+if __name__ == "__main__":
+    # For testing purposes only
+    df = get_input_data()
+    df = de_duplication(df)
+    df = noise_remover(df)
+    df.to_csv("preprocessed_output.csv", index=False)
+    logging.info("Preprocessing complete. Output saved to preprocessed_output.csv")

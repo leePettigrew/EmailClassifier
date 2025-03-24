@@ -13,7 +13,6 @@ import os
 # File paths
 # -----------------------------------------------------------------------------
 
-
 BASE_DIR = os.path.dirname(__file__)          # Directory containing config.py
 DATA_DIR = os.path.join(BASE_DIR, "data")     # Data folder inside the project
 
@@ -47,18 +46,31 @@ TEST_SIZE = 0.2          # 20% of data goes to test set
 RANDOM_SEED = 42         # For reproducible shuffling & model behavior
 
 # -----------------------------------------------------------------------------
-# TF-IDF Embedding parameters
+# Embedding settings
 # -----------------------------------------------------------------------------
+# Choose embedding method: "tfidf" for TF-IDF, "bert" for BERT sentence embeddings
+EMBEDDING_METHOD = "tfidf"
+
+# Pre-trained model name for SentenceTransformer (used if EMBEDDING_METHOD="bert")
+BERT_MODEL_NAME = "all-MiniLM-L6-v2"
+
+# If True, run the pipeline twice to compare TF-IDF and BERT embeddings
+COMPARE_EMBEDDINGS = False
+
+# TF-IDF embedding parameters (only used if EMBEDDING_METHOD="tfidf")
 MAX_FEATURES = 1000      # Limit on the number of most frequent terms in TF-IDF
 STOP_WORDS = "english"   # Remove common English stopwords
 
 # -----------------------------------------------------------------------------
 # RandomForest hyperparameters
 # -----------------------------------------------------------------------------
-NUM_TREES = 100          # Number of trees in each RandomForest classifier
+NUM_TREES = 100          # Number of trees in each RandomForest classifier (n_estimators)
+MAX_DEPTH = None         # Maximum depth of each tree (None for no limit)
+MIN_SAMPLES_SPLIT = 2    # Minimum samples required to split an internal node
 
 # -----------------------------------------------------------------------------
 # Output / Results
 # -----------------------------------------------------------------------------
 EXPORT_RESULTS = False            # If True, export final metrics to CSV
 RESULTS_FILE = "evaluation_results.csv"
+PLOT_CONFUSION = True             # If True, display confusion matrix plots for each label
